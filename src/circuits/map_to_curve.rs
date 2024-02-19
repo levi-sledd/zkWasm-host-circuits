@@ -2,28 +2,27 @@
 #![allow(dead_code)]
 #![allow(unused)]
 
+use halo2_proofs::pairing::bls12_381::{Fq, G1Affine};
+use halo2_proofs::pairing::bn256::{Fr, G1};
 /// Circuit to constrain the map to curve function, which takes
 /// as an input an element of Fq2 and outputs a point on the elliptic curve.
 /// (TODO: more details)
-/// 
+///
 /// Note 1: The reference document uses p for the characteristic of the
-/// field.  Our structs refer to the same prime as q: for example, 
+/// field.  Our structs refer to the same prime as q: for example,
 /// `AssignedFq`.
-/// 
+///
 /// The suffixes "_bn", "_fq", "_fq2" indicate that a variable is a
 /// BigUint, element of Fq, or element of Fq2, respectively.
 /// A variable without one of these suffixes is assumed to be an
 /// AssignedFq2<Fq, Fr>, which is the representation of an element of Fq2
 /// in the computation trace (Context).
-
 use halo2ecc_s::assign::{AssignedFq, AssignedFq2};
 use halo2ecc_s::circuit::ecc_chip::EccBaseIntegerChipWrapper;
 use halo2ecc_s::circuit::fq12::Fq2ChipOps;
 use halo2ecc_s::circuit::integer_chip::IntegerChipOps;
 use halo2ecc_s::context::*;
 use halo2ecc_s::utils::*;
-use halo2_proofs::pairing::bls12_381::{G1Affine, Fq};
-use halo2_proofs::pairing::bn256::{Fr, G1};
 use num_bigint::BigUint;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -37,10 +36,10 @@ use crate::circuits::sgn0::sgn0;
 // e == 1 = 1 + 0i = (1, 0) if and only if a == b, and
 // e == 0 = 0 + 0i = (0, 0) if and only if a != b.
 fn fq2_assign_equality_condition(
-    gseccc: &mut GeneralScalarEccContext::<G1Affine, Fr>,
-    a: &AssignedFq2::<Fq, Fr>,
-    b: &AssignedFq2::<Fq, Fr>,
-) -> AssignedFq2::<Fq, Fr> {
+    gseccc: &mut GeneralScalarEccContext<G1Affine, Fr>,
+    a: &AssignedFq2<Fq, Fr>,
+    b: &AssignedFq2<Fq, Fr>,
+) -> AssignedFq2<Fq, Fr> {
     let a_minus_b: AssignedFq2<Fq, Fr> = gseccc.fq2_sub(&a, &b);
 
     // First, give the prover instructions on how to assign inv0(a - b),
@@ -51,16 +50,15 @@ fn fq2_assign_equality_condition(
     let b_re_fq = gseccc.base_integer_ctx.get_w(&b.0);
     let b_im_fq = gseccc.base_integer_ctx.get_w(&b.1);
     let a_equals_b = (a_re_fq == b_re_fq) && (a_im_fq == b_im_fq);
-    
-    // Here we are using assign_w instead of assign_zero because assign_zero 
-    // is a special cases of assign_constant.  But e depends on prover input, 
+
+    // Here we are using assign_w instead of assign_zero because assign_zero
+    // is a special cases of assign_constant.  But e depends on prover input,
     // and so is not a constant in the computation trace or circuit.
     let a_minus_b_inv0: AssignedFq2<Fq, Fr> = if a_equals_b {
         let zero_bn = BigUint::from_str("0").unwrap();
         (
             gseccc.base_integer_ctx.assign_w(&zero_bn),
             gseccc.base_integer_ctx.assign_w(&zero_bn),
-            
         )
     } else {
         // Since fq2_unsafe_invert may introduce additional constraints,
@@ -68,7 +66,8 @@ fn fq2_assign_equality_condition(
         // the prover input.
         let a_minus_b_re_fq = a_re_fq - b_re_fq;
         let a_minus_b_im_fq = a_im_fq - b_im_fq;
-        let a_minus_b_norm_squared_fq = (a_minus_b_re_fq * a_minus_b_re_fq.clone()) + (a_minus_b_im_fq * a_minus_b_im_fq.clone());
+        let a_minus_b_norm_squared_fq = (a_minus_b_re_fq * a_minus_b_re_fq.clone())
+            + (a_minus_b_im_fq * a_minus_b_im_fq.clone());
         let a_minus_b_norm_squared_inverse_fq = a_minus_b_norm_squared_fq.invert().unwrap();
         let a_minus_b_inv0_re_fq: Fq = a_minus_b_re_fq * a_minus_b_norm_squared_inverse_fq;
         let a_minus_b_inv0_im_fq: Fq = -a_minus_b_im_fq * a_minus_b_norm_squared_inverse_fq.clone();
@@ -80,12 +79,13 @@ fn fq2_assign_equality_condition(
         )
     };
 
-    // Note that for field elements s and t, t^2 * s = t if and only if 
+    // Note that for field elements s and t, t^2 * s = t if and only if
     // either t = 0 or s = t^{-1}.  Therefore the following constraints
     // enforce that a_minus_b_inv0 = (a_minus_b)^{-1} if a - b != 0;
     // otherwise, a_minus_b_inv0 is unconstrained.
     let a_minus_b_squared: AssignedFq2<Fq, Fr> = gseccc.fq2_square(&a_minus_b);
-    let a_minus_b_squared_times_a_minus_b_inv0: AssignedFq2<Fq, Fr> = gseccc.fq2_mul(&a_minus_b_squared, &a_minus_b_inv0);
+    let a_minus_b_squared_times_a_minus_b_inv0: AssignedFq2<Fq, Fr> =
+        gseccc.fq2_mul(&a_minus_b_squared, &a_minus_b_inv0);
     gseccc.fq2_assert_equal(&a_minus_b_squared_times_a_minus_b_inv0, &a_minus_b);
 
     // Now that we've constrained a_minus_b_inv0 this way, it follows that
@@ -105,24 +105,25 @@ fn fq2_assign_equality_condition(
 // a if e = 0 (= 0 + 0i)
 // b if e = 1 (= 1 + 0i)
 fn cmov(
-    gseccc: &mut GeneralScalarEccContext::<G1Affine, Fr>,
-    a: &AssignedFq2::<Fq, Fr>,
-    b: &AssignedFq2::<Fq, Fr>,
-    e: &AssignedFq2::<Fq, Fr>,
-) -> AssignedFq2::<Fq, Fr> {
+    gseccc: &mut GeneralScalarEccContext<G1Affine, Fr>,
+    a: &AssignedFq2<Fq, Fr>,
+    b: &AssignedFq2<Fq, Fr>,
+    e: &AssignedFq2<Fq, Fr>,
+) -> AssignedFq2<Fq, Fr> {
     let one: AssignedFq2<Fq, Fr> = gseccc.fq2_assign_one();
     let not_e: AssignedFq2<Fq, Fr> = gseccc.fq2_sub(&one, e);
     let not_e_times_a: AssignedFq2<Fq, Fr> = gseccc.fq2_mul(&not_e, a);
     let e_times_b: AssignedFq2<Fq, Fr> = gseccc.fq2_mul(e, &b);
-    let not_e_times_a_plus_e_times_b: AssignedFq2<Fq, Fr> = gseccc.fq2_add(&not_e_times_a, &e_times_b);
+    let not_e_times_a_plus_e_times_b: AssignedFq2<Fq, Fr> =
+        gseccc.fq2_add(&not_e_times_a, &e_times_b);
 
     not_e_times_a_plus_e_times_b
 }
 
 // Only for testing purposes; actual sgn0 must be constrained.
 fn sgn0_unconstrained(
-    gseccc: &mut GeneralScalarEccContext::<G1Affine, Fr>,
-    u: &AssignedFq2::<Fq, Fr>,
+    gseccc: &mut GeneralScalarEccContext<G1Affine, Fr>,
+    u: &AssignedFq2<Fq, Fr>,
 ) -> usize {
     let u_re_fq = gseccc.base_integer_ctx.get_w(&u.0);
     let u_im_fq = gseccc.base_integer_ctx.get_w(&u.1);
@@ -136,25 +137,26 @@ fn sgn0_unconstrained(
     let u_re_bn_parity = &u_re_bn % &two_bn;
     let u_im_bn_parity = &u_im_bn % &two_bn;
 
-    let sign_0_equals_1 = u_re_bn_parity == one_bn || (u_re_bn == zero_bn && u_im_bn_parity == one_bn);
+    let sign_0_equals_1 =
+        u_re_bn_parity == one_bn || (u_re_bn == zero_bn && u_im_bn_parity == one_bn);
     let sign_0: usize = if sign_0_equals_1 { 1 } else { 0 };
 
     sign_0
 }
 
 fn simplified_swu_in_context(
-    gseccc: &mut GeneralScalarEccContext::<G1Affine, Fr>,
+    gseccc: &mut GeneralScalarEccContext<G1Affine, Fr>,
     u: &AssignedFq2<Fq, Fr>,
 ) -> (AssignedFq2<Fq, Fr>, AssignedFq2<Fq, Fr>) {
-    /// Constants: see Section 8.8.2 of https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-hash-to-curve-09 
+    /// Constants: see Section 8.8.2 of https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-hash-to-curve-09
     /// Although these are constants in the mathematical sense, the compiler
     /// will not allow me to make these constants in the Rust sense.  But they
     /// are immutable, which is the next best thing.
-    /// 
+    ///
     /// Z = -(2 + i)
     /// A' = 240i
     /// B' = 1012 + 1012i
-    /// 
+    ///
     /// Note: c1 is an integer, and not a field element.  We will hard-code
     /// into the circuit the square-and-multiply algorithm specific to taking
     /// a field element to the power of c1.  Thus in the code we need to write
@@ -164,7 +166,6 @@ fn simplified_swu_in_context(
     /// c3 = sqrt(c2) = 0x135203e60180a68ee2e9c448d77a2cd91c3dedd930b1cf60ef396489f61eb45e304466cf3e67fa0af1ee7b04121bdea2 + (0x06af0e0437ff400b6831e36d6bd17ffe48395dabc2d3435e77f76e17009241c5ee67992f72ec05f4c81084fbede3cc09)i
     /// c4 = 0x136753aead177603ecbfaf2395ee800fb38ef1737f8232e72bb1880c78ae1cabd529aa5c0667f539924950420e408e1b + (0x11eb95120939a15aed4b108ad51262f33bf72acf3adb46259d28f0306d0e27ffe7d29afc46792c103e535c80de7bc0f6)i
     /// c5 = 0x0f5d0d63d2797471e6d39f306cc0dc0ab85de3bd9f39ce46f3649ac0de9e844417cc8de88716c1fd323fa68040801aea + (0x0ab1c2ffdd6c253ca155231eb3e71ba044fd562f6f72bc5bad5ec46a0b7a3b0247cf08ce6c6317f40edbc653a72dee17)i
-    
     // Z = -(2 + i)
     let z_fq2 = (-(Fq::one() + Fq::one()), -Fq::one());
     let z: AssignedFq2<Fq, Fr> = gseccc.fq2_assign_constant(z_fq2);
@@ -219,7 +220,7 @@ fn simplified_swu_in_context(
     let mut tv1: AssignedFq2<Fq, Fr> = gseccc.fq2_square(&u);
     let mut tv3: AssignedFq2<Fq, Fr> = gseccc.fq2_mul(&z, &tv1);
     let mut tv5: AssignedFq2<Fq, Fr> = gseccc.fq2_square(&tv3);
-    let mut xd:  AssignedFq2<Fq, Fr> = gseccc.fq2_add(&tv5, &tv3);
+    let mut xd: AssignedFq2<Fq, Fr> = gseccc.fq2_add(&tv5, &tv3);
     let mut x1n: AssignedFq2<Fq, Fr> = gseccc.fq2_add(&xd, &one);
     x1n = gseccc.fq2_mul(&x1n, &b_prime);
     let minus_a_prime: AssignedFq2<Fq, Fr> = gseccc.fq2_neg(&a_prime);
@@ -301,7 +302,7 @@ fn simplified_swu_in_context(
     tv2 = gseccc.fq2_mul(&tv3, &x1n);
     let mut xn: AssignedFq2<Fq, Fr> = cmov(gseccc, &tv2, &x1n, &e8);
 
-    // For testing purposes only: replace with constrained sgn0 in the final version
+    // // For testing purposes only: replace with constrained sgn0 in the final version
     // if sgn0_unconstrained(gseccc, &u) != sgn0_unconstrained(gseccc, &y) {
     //     y = gseccc.fq2_neg(&y);
     // }
@@ -314,7 +315,6 @@ fn simplified_swu_in_context(
     let sgn0_u_minus_sgn0_y_squared = gseccc.base_integer_ctx.int_square(&sgn0_u_minus_sgn0_y);
     let zero_i = gseccc.base_integer_ctx.assign_int_constant(Fq::zero());
     let sgn0_u_does_not_equal_sgn0_y: AssignedFq2<Fq, Fr> = (sgn0_u_minus_sgn0_y_squared, zero_i);
-
     let minus_y = gseccc.fq2_neg(&y);
     y = cmov(gseccc, &y, &minus_y, &sgn0_u_does_not_equal_sgn0_y);
 
@@ -334,13 +334,13 @@ fn simplified_swu_in_context(
     // let y_field_im = gseccc.base_integer_ctx.get_w(&y.1);
     // println!("y = \n {:?} \n + I * {:?} \n", y_field_re, y_field_im);
 
-    (x, y)   
+    (x, y)
 }
 
 fn isogeny_map_in_context(
-    gseccc: &mut GeneralScalarEccContext::<G1Affine, Fr>,
-    x_prime: &AssignedFq2::<Fq, Fr>,
-    y_prime: &AssignedFq2::<Fq, Fr>,
+    gseccc: &mut GeneralScalarEccContext<G1Affine, Fr>,
+    x_prime: &AssignedFq2<Fq, Fr>,
+    y_prime: &AssignedFq2<Fq, Fr>,
 ) -> (AssignedFq2<Fq, Fr>, AssignedFq2<Fq, Fr>) {
     let k_1_0_re_bn = BigUint::from_str("889424345604814976315064405719089812568196182208668418962679585805340366775741747653930584250892369786198727235542").unwrap();
     let k_1_0_im_bn = BigUint::from_str("889424345604814976315064405719089812568196182208668418962679585805340366775741747653930584250892369786198727235542").unwrap();
@@ -352,7 +352,7 @@ fn isogeny_map_in_context(
     let k_1_1_im_bn = BigUint::from_str("2668273036814444928945193217157269437704588546626005256888038757416021100327225242961791752752677109358596181706522").unwrap();
     let k_1_1_im_fq: Fq = bn_to_field(&k_1_1_im_bn);
     let k_1_1: AssignedFq2<Fq, Fr> = gseccc.fq2_assign_constant((k_1_1_re_fq, k_1_1_im_fq));
-    
+
     let k_1_2_re_bn = BigUint::from_str("2668273036814444928945193217157269437704588546626005256888038757416021100327225242961791752752677109358596181706526").unwrap();
     let k_1_2_im_bn = BigUint::from_str("1334136518407222464472596608578634718852294273313002628444019378708010550163612621480895876376338554679298090853261").unwrap();
     let k_1_2_re_fq: Fq = bn_to_field(&k_1_2_re_bn);
@@ -363,7 +363,7 @@ fn isogeny_map_in_context(
     let k_1_3_re_fq: Fq = bn_to_field(&k_1_3_re_bn);
     let k_1_3_im_fq = Fq::zero();
     let k_1_3: AssignedFq2<Fq, Fr> = gseccc.fq2_assign_constant((k_1_3_re_fq, k_1_3_im_fq));
-    
+
     // Constants used to compute x_den:
     let k_2_0_re_fq = Fq::zero();
     let k_2_0_im_bn = BigUint::from_str("4002409555221667393417789825735904156556882819939007885332058136124031650490837864442687629129015664037894272559715").unwrap();
@@ -382,7 +382,7 @@ fn isogeny_map_in_context(
     let k_3_0_im_bn = BigUint::from_str("3261222600550988246488569487636662646083386001431784202863158481286248011511053074731078808919938689216061999863558").unwrap();
     let k_3_0_im_fq: Fq = bn_to_field(&k_3_0_im_bn);
     let k_3_0: AssignedFq2<Fq, Fr> = gseccc.fq2_assign_constant((k_3_0_re_fq, k_3_0_im_fq));
-    
+
     let k_3_1_re_fq = Fq::zero();
     let k_3_1_im_bn = BigUint::from_str("889424345604814976315064405719089812568196182208668418962679585805340366775741747653930584250892369786198727235518").unwrap();
     let k_3_1_im_fq: Fq = bn_to_field(&k_3_1_im_bn);
@@ -487,13 +487,8 @@ fn isogeny_map_in_context(
 
 #[test]
 fn simplified_swu_outputs_correct_test_vector() {
-    let mut gseccc = GeneralScalarEccContext::<G1Affine, Fr>::new(
-        Rc::new(
-            RefCell::new(
-                Context::new()
-            )
-        )
-    );
+    let mut gseccc =
+        GeneralScalarEccContext::<G1Affine, Fr>::new(Rc::new(RefCell::new(Context::new())));
 
     // From the reference document's test vectors.
     // u[0] = 0x03dbc2cce174e91ba93cbb08f26b917f98194a2ea08d1cce75b2b9cc9f21689d80bd79b594a613d0a68eb807dfdc1cf8 + I * 0x05a2acec64114845711a54199ea339abd125ba38253b70a92c876df10598bd1986b739cad67961eb94f7076511b3b39a
@@ -506,8 +501,6 @@ fn simplified_swu_outputs_correct_test_vector() {
         gseccc.base_integer_ctx.assign_w(&u_im_bn),
     );
 
-    let (x, y) = simplified_swu_in_context(&mut gseccc, &u);
-
     let should_be_x_re_bn = BigUint::from_str("3942339120143403995959884458065911863622623490130179671696530864527894030375709350085997343451924840375271949093332").unwrap();
     let should_be_x_im_bn = BigUint::from_str("3523381697296058645143708860912139218718520142948191822158638626523448297128525915027995335789050238781038107799201").unwrap();
     let should_be_y_re_bn = BigUint::from_str("1842813153358560687634500333570189006426514559071004676715031705637331861897467026112259097700599015948196491964104").unwrap();
@@ -518,6 +511,11 @@ fn simplified_swu_outputs_correct_test_vector() {
     let should_be_y_re_fq: Fq = bn_to_field(&should_be_y_re_bn);
     let should_be_y_im_fq: Fq = bn_to_field(&should_be_y_im_bn);
 
+    // let (x_prime, y_prime) = simplified_swu_in_context(&mut gseccc, &u);
+    // let (x, y) = isogeny_map_in_context(&mut gseccc, &x_prime, &y_prime);
+
+    let (x, y) = simplified_swu_in_context(&mut gseccc, &u);
+
     let x_re_fq = gseccc.base_integer_ctx.get_w(&x.0);
     let x_im_fq = gseccc.base_integer_ctx.get_w(&x.1);
     let y_re_fq = gseccc.base_integer_ctx.get_w(&y.0);
@@ -527,17 +525,14 @@ fn simplified_swu_outputs_correct_test_vector() {
     assert_eq!(should_be_x_im_fq, x_im_fq);
     assert_eq!(should_be_y_re_fq, y_re_fq);
     assert_eq!(should_be_y_im_fq, y_im_fq);
+
+    println!("{:?}", gseccc.base_integer_ctx.ctx.borrow_mut().base_offset);
 }
 
 #[test]
 fn isogeny_map_outputs_correct_test_vector() {
-    let mut gseccc = GeneralScalarEccContext::<G1Affine, Fr>::new(
-        Rc::new(
-            RefCell::new(
-                Context::new()
-            )
-        )
-    );
+    let mut gseccc =
+        GeneralScalarEccContext::<G1Affine, Fr>::new(Rc::new(RefCell::new(Context::new())));
 
     let x_prime_re_bn = BigUint::from_str("3942339120143403995959884458065911863622623490130179671696530864527894030375709350085997343451924840375271949093332").unwrap();
     let x_prime_im_bn = BigUint::from_str("3523381697296058645143708860912139218718520142948191822158638626523448297128525915027995335789050238781038107799201").unwrap();
@@ -569,7 +564,7 @@ fn isogeny_map_outputs_correct_test_vector() {
     let should_be_x_im_fq: Fq = bn_to_field(&should_be_x_im_bn);
     let should_be_y_re_fq: Fq = bn_to_field(&should_be_y_re_bn);
     let should_be_y_im_fq: Fq = bn_to_field(&should_be_y_im_bn);
-    
+
     assert_eq!(should_be_x_re_fq, x_re_fq);
     assert_eq!(should_be_x_im_fq, x_im_fq);
     assert_eq!(should_be_y_re_fq, y_re_fq);
